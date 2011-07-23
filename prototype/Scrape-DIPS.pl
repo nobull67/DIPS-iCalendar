@@ -7,7 +7,7 @@ use Storable;
 use Getopt::Long;
 use 5.10.0;
 
-my $months_to_get = 2;
+my $months_to_get = 6;
 my $output_file = 'Scrape-DIPS.dat';
 
 GetOptions( 'user=s' => \my $user,
