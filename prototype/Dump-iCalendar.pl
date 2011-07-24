@@ -81,9 +81,10 @@ sub duty {
 	} else {
 	    # Not even same day!
 	    $summary .= " ($duty->{StartDate} $duty->{StartTime}-$duty->{EndTime})";
+
+	    $start = $start1;
+	    $end = $end1;
 	}
-	$start = $start1;
-	$end = $end1;
     }
     my $date = $duty->{date};
 
@@ -95,7 +96,7 @@ sub duty {
     say "LOCATION:",qu($loc);
 
     say "SUMMARY:",qu($summary);
-    
+
     say "UID:$id\@duties.org/DIPS-iCalendar";
     say "END:VEVENT";
 }
