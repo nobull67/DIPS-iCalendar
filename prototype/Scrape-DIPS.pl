@@ -32,10 +32,12 @@ $dips .= '/training' if $training;
 
 my $mech = WWW::Mechanize->new();
 
+print "Login as $user";
 $mech->get( $dips );
 $mech->field('UserName',$user);
 $mech->field('Password',$pass);
 $mech->submit;
+say;
 
 my (%duties);
 
@@ -124,10 +126,19 @@ unless ( $no_commitment ) {
 	}
 	# say $content;
 	my $tree = HTML::TreeBuilder::XPath->new_from_content($content);
-	my @member_duties = $tree->findnodes_as_strings('/html/body/table/tr[td[6] and not(@bgcolor)]/td[1]');
 	my $name = $tree->findvalue('/html/body/table/tr[1]/td[2]');
-	push @{$duties{$_}{members_committed}} => { id => $member, name => $name } for @member_duties;
-	print "$name - ",scalar(@member_duties),"\n";
+	my @rows = $tree->findnodes('/html/body/table/tr[td[6] and not(@bgcolor)]');
+	for my $row ( @rows ) {
+	    my $duty = $row->findvalue('td[1]');
+	    my ($from,$until) = $row->findvalue('td[3]') =~ /(\d+:\d+)/g;
+	    push @{$duties{$duty}{members_committed}} => {
+		id => $member,
+		name => $name,
+		from => $from,
+		until => $until,
+	    };
+	}
+	print "$name - ",scalar(@rows),"\n";
 	last if $quick_test;
     }
 }
