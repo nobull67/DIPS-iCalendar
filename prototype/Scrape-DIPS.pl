@@ -32,20 +32,20 @@ $dips .= '/training' if $training;
 
 my $mech = WWW::Mechanize->new();
 
+$|=1; # So we can print dots
+
 print "Login as $user";
 $mech->get( $dips );
 $mech->field('UserName',$user);
 $mech->field('Password',$pass);
 $mech->submit;
-say;
+say '';
 
 my (%duties);
 
-$|=1; # So we can print dots
 
 # Avoid start of day redirect later
 $mech->get("$dips/newsja/DutySystem-List.asp?filter=$filter");
-
 
 sub trim {
     for (shift) {
@@ -82,7 +82,7 @@ sub get_duty_list {
 		redo;
 	    }
 	}
-	say;
+	say '';
     }
 }
 
@@ -97,7 +97,7 @@ print "Found duties = ". scalar(keys(%duties)) . "\n";
 my $my_division_id;
 
 unless ( $no_commitment ) {
-    my @members;
+    my %members;
 
     print "My default division is ";
     $mech->get("$dips/newsja/FindMemberCountyWide.asp");
@@ -105,42 +105,46 @@ unless ( $no_commitment ) {
     $my_division_id = $divisional_input->value;
     print "$my_division_id\n";
     undef $my_division_id if $my_division_id eq 'all';
-    for ( $divisional_input->possible_values ) {
-	next unless /^\d+$/;
-	print "Get list of members for $_";
-	$mech->current_form->value('division',$_);
+    for my $division_id ( $divisional_input->possible_values ) {
+	next unless $division_id =~ /^\d+$/;
+	print "Get list of members for $division_id";
+	$mech->current_form->value('division',$division_id);
 	$mech->submit;
-	my @m = $mech->res->content =~ /FutureCommitment.asp\?disptype=showmember&member=(\d+)'/g; 
+	$members{$division_id} = \my @m;
+	@m = $mech->res->content =~ /FutureCommitment.asp\?disptype=showmember&member=(\d+)'/g; 
 	print " - ",scalar(@m),"\n";
-	push @members => @m;
 	$mech->back;
     }
 
-    for my $member ( @members ) {
-	print "Future commitment ";
-	$mech->get("$dips/newsja/FutureCommitment.asp?disptype=showmember&member=$member");
-	my $content = $mech->res->content;
-	if ( $content =~ /NO records to show - Please go back and search again/ ) {
-	    print "[$member] - none\n";
-	    next;
-	}
-	# say $content;
-	my $tree = HTML::TreeBuilder::XPath->new_from_content($content);
-	my $name = $tree->findvalue('/html/body/table/tr[1]/td[2]');
-	my @rows = $tree->findnodes('/html/body/table/tr[td[6] and not(@bgcolor)]');
-	for my $row ( @rows ) {
-	    my $duty = $row->findvalue('td[1]');
-	    my ($from,$until) = $row->findvalue('td[3]') =~ /(\d+:\d+)/g;
-	    push @{$duties{$duty}{members_committed}} => {
-		id => $member,
-		name => $name,
-		from => $from,
-		until => $until,
-	    };
-	}
-	print "$name - ",scalar(@rows),"\n";
-	last if $quick_test;
-    }
+
+  DIV: for my $division_id ( keys %members ) {    
+      for my $member ( @{$members{$division_id}} ) {
+	  print "Future commitment ";
+	  $mech->get("$dips/newsja/FutureCommitment.asp?disptype=showmember&member=$member");
+	  my $content = $mech->res->content;
+	  if ( $content =~ /NO records to show - Please go back and search again/ ) {
+	      print "[$member] - none\n";
+	      next;
+	  }
+	  # say $content;
+	  my $tree = HTML::TreeBuilder::XPath->new_from_content($content);
+	  my $name = $tree->findvalue('/html/body/table/tr[1]/td[2]');
+	  my @rows = $tree->findnodes('/html/body/table/tr[td[6] and not(@bgcolor)]');
+	  for my $row ( @rows ) {
+	      my $duty = $row->findvalue('td[1]');
+	      my ($from,$until) = $row->findvalue('td[3]') =~ /(\d+:\d+)/g;
+	      push @{$duties{$duty}{members_committed}} => {
+		  id => $member,
+		  name => $name,
+		  from => $from,
+		  until => $until,
+		  division_id => $division_id,
+	      };
+	  }
+	  print "$name - ",scalar(@rows),"\n";
+	  last DIV if $quick_test;
+      }
+  }
 }
 
 for my $duty ( sort keys %duties ) {
