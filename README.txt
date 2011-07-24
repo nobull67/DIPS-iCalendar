@@ -23,9 +23,14 @@ Dump-iCalendar.pl
 
 The first program visits DIPS reading all your unit’s duties and creates a file (in the current directory) Scrape-DIPS.dat which is just a big serialised Perl hash. (If you need to go through a web proxy to access DIPS then you need a Perl nerd to show you how to configure proxies in Perl).
 
-By “your unit” I mean the unit that comes up as the default when you select “Divisional listing” or “Find members”. This assumes you are a Unit-level user. If not then it probably won’t work.
+By “your unit” I mean the unit that comes up as the default when you select “Divisional listing”.
 
-By “your unit’s duties” I mean any duty that appears in your “Divisional listing” for the six calendar months starting with the current month or appears in any of your members’ “future commitment” listings.
+By “your unit’s duties” I mean any duty that appears in your “Divisional listing” for the six calendar months starting with the current month. (You can adjust this window with --months= and months-back=).
+
+You can also opt to scrape the entire the county or sector listing instead using --county and --sector options 
+
+Unless you say --no-commitment then it'll also include any duties in the future commitment listing of all the members you can see through “Find members”.
+This is most useful if a Unit-level user, otherwise it'll probably be just like grabbing everything.
 
 The second program processes Scrape-DIPS.dat and creates Scrape-DIPS.ics which you can import into your Google Calendar or other diary program.
 
