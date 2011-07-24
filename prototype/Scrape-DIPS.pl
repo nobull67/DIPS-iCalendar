@@ -7,7 +7,7 @@ use Storable;
 use Getopt::Long;
 use 5.10.0;
 
-my $months_forward = 6;
+my $months_forward = 1;
 my $months_back = 0;
 my $output_file = 'Scrape-DIPS.dat';
 
@@ -16,6 +16,7 @@ GetOptions( 'user=s' => \my $user,
 	    'months=i' => \$months_forward,
 	    'months-back=i' => \$months_back,
 	    'training' => \my $training,
+	    'division=s' => \my @division_filter, # drill down only for these
 	    'no-commitment' => \my $no_commitment,
 	    'sector' => \my $list_sector,
 	    'county' => \my $list_county,
@@ -43,9 +44,14 @@ say '';
 
 my (%duties);
 
-
 # Avoid start of day redirect later
 $mech->get("$dips/newsja/DutySystem-List.asp?filter=$filter");
+
+sub exclude_division {
+    my $division_code = shift // ''; # We find some users w/o unit
+    !!@division_filter &&
+	! grep { $_ eq $division_code } @division_filter;
+}
 
 sub trim {
     for (shift) {
@@ -89,8 +95,6 @@ sub get_duty_list {
 get_duty_list $months_forward, qr/^Show Next Months/;
 # Yes, I know we'll fetch this month twice - so shoot me.
 get_duty_list $months_back, qr/Show Last Months/;
-
-print "Found duties = ". scalar(keys(%duties)) . "\n";
 
 # The list of unit duties may not include all those to which members are committed
 
@@ -147,6 +151,8 @@ unless ( $no_commitment ) {
   }
 }
 
+say "Found duties = ",scalar(keys(%duties));
+
 for my $duty ( sort keys %duties ) {
     my $d=$duties{$duty};
     my $internal_id = $d->{internal_id};
@@ -172,38 +178,44 @@ for my $duty ( sort keys %duties ) {
     {
 	$mech->get("$dips/newsja/DutyInformation2-ShowMap.asp?duty=$internal_id&page=2");
 	my $content = $mech->res->content;
-	@$d{'external_id','date','from','until'} =
-	    $content =~ />(\w+\/\d+\/\d+) - (\S+) from (\S+) until (\S+)<\/td>/;
+	@$d{'external_id','StartDate','StartTime','EndTime'} =
+	    $content =~ />(\w+\/\d+\/\d+) - (\S+) from (\S+) until (\S+)<\/td>/
+	    or die $content;
 	$mech->form_name('form1'); # Great name eh?
 	$d->{$_->name // ''}=$_->value for $mech->current_form->inputs;
 	delete $d->{''};
-	print " $d->{date}";
-    }
+}
 
     {
 	$mech->get("$dips/newsja/DutyInformation4-Show.asp?duty=$internal_id&page=4");
 	my $content = $mech->res->content;
-	my @c;
-	while (  $content =~ /w\('(DivisionPop-up(?:Req)?\.asp\?division=(\w+).*?)'.*?<b>(\w+)/g ) {
-	    print " $3";
+	$d->{divisions} = \my @c;
+	while (  $content =~ /w\('(DivisionPop-up(Req)?\.asp\?division=(\w+).*?)'.*?<b>(\w+)/g ) {
+	    my $division_code = $4;
 	    my $url = $1; 
-	    my %i = (
-		division_id => $2,
-		division_code => $3,
+	    my $is_req_row = !!$2;
+	    my %i = $is_req_row ? () : (
+		division_id => $3,
+		division_code => $division_code,
 		);
-	    push @c => \%i;
+	    if ( $is_req_row ) {
+		$d->{required} = \%i;
+	    } else {
+		next if exclude_division $division_code;
+		push @c => \%i;
+	    }
+	    print " $division_code";
 	    $url =~ s/&amp;/&/g; # Wierd escaping in the javascript
 	    $mech->get($url);
 	    $i{$_->name // ''}=$_->value for $mech->current_form->inputs;
 	    delete $i{''};
-	    my $tree = HTML::TreeBuilder::XPath->new_from_content($mech->res->content);
-	    ($i{division_name})=$tree->findnodes_as_strings('/html/body/form/table/tr[2]/td[2]');
-
+	    unless ( $is_req_row ) {
+		my $tree = HTML::TreeBuilder::XPath->
+		    new_from_content($mech->res->content);
+		($i{division_name})=
+		    $tree->findnodes_as_strings('/html/body/form/table/tr[2]/td[2]');
+	    }
 	}
-	$d->{divisions} = \@c;
-	$d->{required} = my $r = shift @c;
-	die unless delete $r->{division_id} eq 'REQ'; # Sanity check
-	delete $r->{division_name}; delete $r->{division_code};
     }
     {
 	$d->{members} = \my @members;
@@ -211,25 +223,37 @@ for my $duty ( sort keys %duties ) {
 	my $tree = HTML::TreeBuilder::XPath->new_from_content($mech->res->content);
 	my @rows = $tree->findnodes('/html/body/table/tr/td/center/table[2]/tr');
 	for my $row ( @rows ) {
-	    # Was hoping this would have the members' internal IDs but is doesn't 
-	    next unless ( $row->attr('onclick') // '') =~ /type=editmember&record=\d+/ ;
+	    # We want the record ID of the members attendance at the 
+	    # duty to make the UID for the iCalendar entry in the
+	    # member's calendar as member could have more than on
+	    # shift on a duty
+	    
+	    next unless my ($url,$record) = ( $row->attr('onclick') // '')
+		=~ /'(.*type=editmember&record=(\d+).*?)'/ ;
+
 	    my @c = $row->findnodes_as_strings('td');
 	    my ( $division_code,$division_name) = $c[4] =~ /\(\w+\)\s*(\w+)\s+-\s+(.*)/;
+	    next if exclude_division $division_code;
+	    print ".";
 	    my $name=trim("@c[0,1]");
 	    # Let's assume there's noboby called "- Lead Name"
 	    my $lead = 0+ $name =~ s/\s+- Lead Name\s*$//i;
 	    my ($role) = $c[2] =~ /\((\w+)\)/;
-	    push @members => {
+	    # Need to drill down to to get start and end as
+	    # we can't assume the date of the shift is the same
+	    # as the date of the duty
+	    $mech->get($url);
+	    my %i = ( 
+		record => $record,
 		name => $name, 
-		role => $role,
-		lead => $lead,
-		from => $c[5],
-		until => $c[6],
 		division_name => $division_name,
 		division_code => $division_code,
-	    }
+		);
+	    push @members => \%i;
+	    $i{$_->name // ''}=$_->value for $mech->current_form->inputs;
+	    delete $i{''};
 	}
-	say " members=",scalar(@members);
+	say '';
     }
     last if $quick_test;
 }
