@@ -5,12 +5,32 @@ use Storable;
 use 5.10.0;
 use Getopt::Long;
 use POSIX qw( strftime );
+use Time::Local;
 
 sub qu {
     my $s = shift;
     $s =~ s/([,;\\])|(\n)/ $2 ? "\\n" : "\\$1" /eg;
     $s;
 }
+
+sub parse_date_to_noon {
+    return unless my $date = shift;
+    # Must adjust the date for the end time past midnight
+    my ($d,$m,$y) = $date =~ /(\d+)/g;
+    timegm 0, 0, 12, $d-0, $m-1, $y-1900;
+};
+
+sub fixup_dates {
+    my $d = shift;
+    s/^(\d\d):(\d\d)$/$1${2}00/ or die
+	for my($from,$until)=@$d{'StartTime','EndTime'};
+
+    my $noon = parse_date_to_noon($d->{StartDate});
+    $d->{start} = strftime "%Y%m%dT$from", gmtime $noon;
+    $noon = parse_date_to_noon($d->{EndDate}) || 
+	$noon + ( $until lt $from ? 86400 : 0);
+    $d->{end} = strftime "%Y%m%dT$until", gmtime $noon;
+}    
 
 my $ics_file;
 
@@ -45,29 +65,30 @@ sub end_calendar {
 }
 
 sub duty {
-    my ($duty,$from,$until) = @_;
+    my ($duty,$start1,$end1,$id) = @_;
 
     say "BEGIN:VEVENT";
 
-    my $end = $duty->{'until'};
-    my $start = $duty->{from};
+    $id ||= "duty-$duty->{internal_id}";
+    my $end = $duty->{end};
+    my $start = $duty->{start};
     my $summary = $duty->{Event};
 
     # If the members times differ from the duty then put the duty time on the 
-    if ($from && "$from$until" ne "$start$end" ) {
-	$summary .= " ($start-$end)";
-	$start = $from;
-	$end = $until;
+    if ($start1 && "$start1$end1" ne "$start$end" ) {
+	if ( substr($start,0,6) eq substr($start1,1,6) ) {
+	    $summary .= " ($duty->{StartTime}-$duty->{EndTime})";
+	} else {
+	    # Not even same day!
+	    $summary .= " ($duty->{StartDate} $duty->{StartTime}-$duty->{EndTime})";
+	}
+	$start = $start1;
+	$end = $end1;
     }
     my $date = $duty->{date};
-    $date =~ s/^(\d\d)\/(\d\d)\/(\d\d\d\d)$/$3$2$1/ or die;
 
-    $end =~ s/^(\d\d):(\d\d)$/${date}T$1${2}00/ or die;
     say "DTEND;TZID=UK:$end";
-
     say "DTSTAMP:20110715T181550Z";
-
-    $start =~ s/^(\d\d):(\d\d)$/${date}T$1${2}00/ or die;
     say "DTSTART;TZID=UK:$start";
 
     my $loc = join ', ' => grep { length } @$duty{(sort grep { /^DutyAddress/ } keys %$duty),'DutyPostCode' };
@@ -75,7 +96,7 @@ sub duty {
 
     say "SUMMARY:",qu($summary);
     
-    say "UID:$duty->{external_id}\@duties.org/DIPS-iCalendar";
+    say "UID:$id\@duties.org/DIPS-iCalendar";
     say "END:VEVENT";
 }
 
@@ -90,6 +111,7 @@ my $duties = @{retrieve($input_file)}{'duties'};
 
 my %units;
 for my $duty ( @$duties ) {
+    fixup_dates $duty;
     my $external_id = $duty->{external_id};
     for my $d ( @{$duty->{divisions}} ) {
 	my $u = \%{$units{$d->{division_code}}};
@@ -98,6 +120,7 @@ for my $duty ( @$duties ) {
     }
     for my $m ( @{$duty->{members}} ) {
 	# Handly back link in member
+	fixup_dates $m;
 	$m->{duty} = $duty;
 	my $u = \%{$units{$m->{division_code}}};
 	$u->{name} ||= $m->{division_name};
@@ -116,7 +139,7 @@ for my $division_code ( sort keys %units ) {
     for my $member_name ( sort keys %{$u->{members}} ) {
 	begin_calendar("$division_code $member_name");
 	for my $m ( @{$u->{members}{$member_name}{duties}} ) {
-	    duty @$m{'duty','from','until'};
+	    duty @$m{'duty','start','end'}, "duty-member-shift-$m->{record}";
 	}
 	end_calendar;
     }
