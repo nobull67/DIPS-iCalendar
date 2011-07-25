@@ -115,6 +115,7 @@ for my $duty ( @$duties ) {
     fixup_dates $duty;
     my $external_id = $duty->{external_id};
     for my $d ( @{$duty->{divisions}} ) {
+	fixup_dates $d;
 	my $u = \%{$units{$d->{division_code}}};
 	$u->{name} = $d->{division_name};
 	$u->{duties}{$external_id} = $duty;

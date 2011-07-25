@@ -7,6 +7,9 @@ use Storable;
 use Getopt::Long;
 use 5.10.0;
 
+$Data::Dumper::Sortkeys = 1;
+$Data::Dumper::Indent = 1;
+
 my $months_forward = 1;
 my $months_back = 0;
 my $output_file = 'Scrape-DIPS.dat';
@@ -258,9 +261,17 @@ for my $duty ( sort keys %duties ) {
     last if $quick_test;
 }
 
-store { 
+my $dat = { 
     duties=> [ values %duties ],
     my_division_id => $my_division_id,
-}, $output_file;
+};
+
+store $dat, $output_file;
+
+if ( $output_file =~ s/\.dat$/.txt/ ) {
+    open my $dump, '>', $output_file or dir $!;
+    say $dump Dumper $dat;
+}
+
 
 __END__
