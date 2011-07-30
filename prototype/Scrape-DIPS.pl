@@ -10,14 +10,16 @@ use 5.10.0;
 $Data::Dumper::Sortkeys = 1;
 $Data::Dumper::Indent = 1;
 
-my $months_forward = 1;
-my $months_back = 0;
+my %months_to_get = ( 
+    forward => 1,
+    backward => 0,
+    );
 my $output_file = 'Scrape-DIPS.dat';
 
 GetOptions( 'user=s' => \my $user,
 	    'pass=s' => \my $pass,
-	    'months=i' => \$months_forward,
-	    'months-back=i' => \$months_back,
+	    'months=i' => \$months_to_get{forward},
+	    'months-back=i' => \$months_to_get{backward},
 	    'training' => \my $training,
 	    'division=s' => \my @division_filter, # drill down only for these
 	    'no-commitment' => \my $no_commitment,
@@ -63,42 +65,55 @@ sub trim {
 	return $_;
     }
 }
+{
+# Yes, I know we'll fetch home page twice - so shoot me.
+    my %month_link_patterns = (
+	forward => qr/^Show Next Months/,
+	backward => qr/Show Last Months/,
+	);
+    my %page_link_patterns = (
+	forward => qr/^Next Page/,
+	backward => qr/<< Last Page/,
+	);
 
-sub get_duty_list {
-    my ($months_to_get,$next_link_pattern) = @_;
-    if ($months_to_get) {
-	print "Get $months_to_get months duties (filter='$filter' link=$next_link_pattern)"; 
+    for my $month_direction ( 'forward','backward') {
+	if (my $months_to_get = $months_to_get{$month_direction}) {
+	    print "Get $months_to_get months duties (filter='$filter' direction=$month_direction)"; 
+	    my $page_direction = $month_direction;
+	    $mech->get("$dips/newsja/DutySystem-List.asp?filter=$filter");
 
-	$mech->get("$dips/newsja/DutySystem-List.asp?filter=$filter");
+	    {
+		my $content = $mech->res->content;
+		my ($page_no,$month) = $content =~
+		    /<b>(\d+)<\/b><\/font>.*<b>Duties Between: \d+\/(\d+)/s;
+		print " $month-$page_no";
 
-	my $months_got;
-	{
-	    print ".";
-	    my $content = $mech->res->content;
-	    while ( $content =~ /&duty=(\d+)&[^>]*><font size="2">(\S+?)</g ) {
-		$duties{$2}{internal_id}=$1;
+		while ( $content =~ /&duty=(\d+)&[^>]*><font size="2">(\S+?)</g ) {
+		    $duties{$2}{internal_id}=$1;
+		}
+
+		my @links = grep { $_->tag eq 'a' } $mech->links;
+
+		if ( my ($next_page) = grep { $_->text =~ $page_link_patterns{$page_direction} } @links ) {
+		    $mech->get($next_page->url);
+		    redo;
+		}
+
+
+		last unless --$months_to_get > 0 ;
+
+		# If we've followed 'Last Month' we go to page 1 of last month
+		$page_direction = 'forward';
+
+		if ( my ($next_month) = grep { $_->text =~ $month_link_patterns{$month_direction} } @links ) {
+		    $mech->get($next_month->url);
+		    redo;
+		}
 	    }
-
-	    my @links = grep { $_->tag eq 'a' } $mech->links;
-
-	    if ( my ($next_page) = grep { $_->text =~ /^Next Page/ } @links ) {
-		$mech->get($next_page->url);
-		redo;
-	    }
-	    last unless ++$months_got < $months_to_get;
-	    if ( my ($next_month) = grep { $_->text =~ $next_link_pattern } @links ) {
-		$mech->get($next_month->url);
-		redo;
-	    }
+	    say '';
 	}
-	say '';
     }
 }
-
-get_duty_list $months_forward, qr/^Show Next Months/;
-# Yes, I know we'll fetch this month twice - so shoot me.
-get_duty_list $months_back, qr/Show Last Months/;
-
 # The list of unit duties may not include all those to which members are committed
 
 my $my_division_id;
