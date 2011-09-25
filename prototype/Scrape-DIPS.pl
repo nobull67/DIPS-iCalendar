@@ -29,6 +29,9 @@ GetOptions( 'user=s' => \my $user,
 	    'quick-test' => \my $quick_test, # Testing - bail out after one of each thing
     );
 
+die "No user" unless $user;
+die "No password" unless $pass;
+
 my $filter = 'myduties'; # Unit level
 $filter = 'myarea' if $list_sector;
 $filter = '' if $list_county;
@@ -84,9 +87,16 @@ sub trim {
 
 	    {
 		my $content = $mech->res->content;
-		my ($page_no,$month) = $content =~
-		    /<b>(\d+)<\/b><\/font>.*<b>Duties Between: \d+\/(\d+)/s;
-		print " $month-$page_no";
+		my ($month) = $content =~
+		    /Total Records =.*<b>Duties Between: \d+\/(\d+)/s or 
+		    die $content;
+
+		my ($page_no) = $content =~
+		    /<b>(\d+)<\/b><\/font>/;
+
+		$page_no //= 'none';
+
+		print " $month($page_no)";
 
 		while ( $content =~ /&duty=(\d+)&[^>]*><font size="2">(\S+?)</g ) {
 		    $duties{$2}{internal_id}=$1;
