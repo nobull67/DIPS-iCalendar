@@ -88,7 +88,7 @@ sub trim {
 	    {
 		my $content = $mech->res->content;
 		my ($month) = $content =~
-		    /Total Records =.*<b>Duties Between: \d+\/(\d+)/s or 
+		    /Total Records =.*<b>(?:Duties|Events) Between: \d+\/(\d+)/s or 
 		    die $content;
 
 		my ($page_no) = $content =~
