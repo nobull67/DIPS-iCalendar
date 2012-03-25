@@ -259,8 +259,10 @@ for my $duty ( sort keys %duties ) {
 	    next unless my ($url,$record) = ( $row->attr('onclick') // '')
 		=~ /'(.*type=editmember&record=(\d+).*?)'/ ;
 
-	    my @c = $row->findnodes_as_strings('td');
-	    my ( $division_code,$division_name) = $c[4] =~ /\(\w+\)\s*(\w+)\s+-\s+(.*)/;
+	    # The td node has the "logged by" in a separate child node.
+            # the one we want is the direct text() child.	    
+	    my @c = $row->findnodes_as_strings('td/text()[1]');
+	    my ( $division_code,$division_name) = $c[4] =~ /(\w+)\s+-\s+(.*)/;
 	    next if exclude_division $division_code;
 	    print ".";
 	    my $name=trim("@c[0,1]");
