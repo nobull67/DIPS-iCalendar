@@ -1,11 +1,12 @@
 use strict;
 use warnings;
-use WWW::Mechanize;
+use WWW::Mechanize::GZip;
 use Data::Dumper;
 use HTML::TreeBuilder::XPath;
 use Storable;
 use Getopt::Long;
 use 5.10.0;
+use warnings FATAL => 'uninitialized';
 
 $Data::Dumper::Sortkeys = 1;
 $Data::Dumper::Indent = 1;
@@ -20,6 +21,7 @@ GetOptions( 'user=s' => \my $user,
 	    'pass=s' => \my $pass,
 	    'months=i' => \$months_to_get{forward},
 	    'months-back=i' => \$months_to_get{backward},
+	    'start-url=s' => \my $dips,
 	    'training' => \my $training,
 	    'division=s' => \my @division_filter, # drill down only for these
 	    'no-commitment' => \my $no_commitment,
@@ -36,10 +38,10 @@ my $filter = 'myduties'; # Unit level
 $filter = 'myarea' if $list_sector;
 $filter = '' if $list_county;
 
-my $dips='https://secure.duties.org.uk';
+$dips //= 'https://dips.sja.org.uk';
 $dips .= '/training' if $training;
 
-my $mech = WWW::Mechanize->new();
+my $mech = WWW::Mechanize::GZip->new();
 
 $|=1; # So we can print dots
 
@@ -50,10 +52,11 @@ $mech->field('Password',$pass);
 $mech->submit;
 say '';
 
-my (%duties);
+($dips = $mech->uri) =~ s/\/index.*//;
+
 
 # Avoid start of day redirect later
-$mech->get("$dips/newsja/DutySystem-List.asp?filter=$filter");
+$mech->get("$dips/DutySystem-List.asp?filter=$filter");
 
 sub exclude_division {
     my $division_code = shift // ''; # We find some users w/o unit
@@ -68,6 +71,34 @@ sub trim {
 	return $_;
     }
 }
+
+my (%duties,%dat,%units_by_name);
+$dat{units} = \my %units;
+
+#sub get_unit_info {
+#   my $info = shift;
+#   unless ( $info->{code} ) {
+#        say "Fetch info for $info->{id}";
+#	$mech->get("$dips/DivisionManagement-Edit.asp?disptype=edit&division=$info->{id}");
+#	($info->{code}) = $mech->content =~ />Unit Reference Code<\/td>(?>.*?<td.*?>\s*)(.*?)</s;
+#   }
+#   $info;
+#}
+
+# Snatch the list of units so we can get the id from the name if we need it
+{
+  $mech->get("$dips/DivisionPop-upNew.asp?division=NEW");
+  my $input = $mech->current_form->find_input( 'DivisionalLink2' );
+  my @unit_ids = $input->possible_values;
+  my @unit_names = $input->value_names;
+  $_->{name} = shift @unit_names for @units{@unit_ids};
+  delete @units{ grep { /\D/ } @unit_ids};
+  while ( my ($id,$info) = each %units ) {
+    $units_by_name{$info->{name}} = $info;
+    $info->{id} = $id;
+  }
+}
+
 {
 # Yes, I know we'll fetch home page twice - so shoot me.
     my %month_link_patterns = (
@@ -83,7 +114,7 @@ sub trim {
 	if (my $months_to_get = $months_to_get{$month_direction}) {
 	    print "Get $months_to_get months duties (filter='$filter' direction=$month_direction)"; 
 	    my $page_direction = $month_direction;
-	    $mech->get("$dips/newsja/DutySystem-List.asp?filter=$filter");
+	    $mech->get("$dips/DutySystem-List.asp?filter=$filter");
 
 	    {
 		my $content = $mech->res->content;
@@ -91,14 +122,14 @@ sub trim {
 		    /Total Records =.*<b>(?:Duties|Events) Between: \d+\/(\d+)/s or 
 		    die $content;
 
-		my ($page_no) = $content =~
-		    /<b>(\d+)<\/b><\/font>/;
+		my ($page_no) = $content =~ /<b>(\d+)<\/b><\/font>/;
 
 		$page_no //= 'none';
 
 		print " $month($page_no)";
 
-		while ( $content =~ /&duty=(\d+)&[^>]*><font size="2">(\S+?)</g ) {
+		# die $content;
+		while ( $content =~ / on[Cc]lick="SE\((\d+)\)\" (?>.*?>)(\S+?)</g ) {
 		    $duties{$2}{internal_id}=$1;
 		}
 
@@ -132,7 +163,7 @@ unless ( $no_commitment ) {
     my %members;
 
     print "My default division is ";
-    $mech->get("$dips/newsja/FindMemberCountyWide.asp");
+    $mech->get("$dips/FindMemberCountyWide.asp");
     my $divisional_input= $mech->current_form->find_input('division');
     $my_division_id = $divisional_input->value;
     print "$my_division_id\n";
@@ -141,9 +172,11 @@ unless ( $no_commitment ) {
 	next unless $division_id =~ /^\d+$/;
 	print "Get list of members for $division_id";
 	$mech->current_form->value('division',$division_id);
+	$mech->current_form->value('area','all');
 	$mech->submit;
 	$members{$division_id} = \my @m;
-	@m = $mech->res->content =~ /FutureCommitment.asp\?disptype=showmember&member=(\d+)'/g; 
+	# die Dumper $mech->res->content;
+	@m = $mech->res->content =~ /FutureCommitment.aspx?\?disptype=showmember&member=(\d+)'/g; 
 	print " - ",scalar(@m),"\n";
 	$mech->back;
     }
@@ -152,7 +185,7 @@ unless ( $no_commitment ) {
   DIV: for my $division_id ( keys %members ) {    
       for my $member ( @{$members{$division_id}} ) {
 	  print "Future commitment ";
-	  $mech->get("$dips/newsja/FutureCommitment.asp?disptype=showmember&member=$member");
+	  $mech->get("$dips/FutureCommitment.asp?disptype=showmember&member=$member");
 	  my $content = $mech->res->content;
 	  if ( $content =~ /NO records to show - Please go back and search again/ ) {
 	      print "[$member] - none\n";
@@ -190,114 +223,98 @@ for my $duty ( sort keys %duties ) {
 	# This is insane - we are told to strip the leading zero from the number
 	# then the site performs an end-with search on the number!
 	# Fortunately the 0-prefixed one should always appear on the first page
-	my ($year,$number) = $duty =~ /^(\d+)\/0*(\d+)$/ or die;
-	$mech->get("$dips/newsja/FindEvent.asp");
-	$mech->field('Year',$year);
-	$mech->field('Duty',$number);
-	$mech->field('StartDate',"01/01/$year");
-	$mech->field('EndDate',"31/12/$year");
+	$mech->get("$dips/FindEvent.asp");
+	$mech->field('RegionalEvent',$duty);
 	$mech->submit;
 	my $content = $mech->res->content;
-	($internal_id) = $content =~ /.*&duty=(\d+)&.*>$duty<.*/;
+	($internal_id) = $content =~ / on[cC]lick="SE\((\d+)\)" /;
 	die $content unless $internal_id;
 	$d->{internal_id}=$internal_id;
 	print " [$internal_id]"; 
     }
     {
-	$mech->get("$dips/newsja/DutyInformation2-ShowMap.asp?duty=$internal_id&page=2");
+	$mech->get("$dips/DutyInformation2-ShowMap.asp?duty=$internal_id&page=2");
 	my $content = $mech->res->content;
 	@$d{'external_id','StartDate','StartTime','EndTime'} =
-	    $content =~ />(\w+\/\d+\/\d+) - (\S+) from (\S+) until (\S+)<\/td>/
+	    $content =~ />(\w+\/\d+\/?\S+) - (\S+) from (\S+) until (\S+)<\/td>/
 	    or die $content;
 	$mech->form_name('form1'); # Great name eh?
 	$d->{$_->name // ''}=$_->value for $mech->current_form->inputs;
 	delete $d->{''};
-}
+    }
 
     {
-	$mech->get("$dips/newsja/DutyInformation4-Show.asp?duty=$internal_id&page=4");
+	$mech->get("$dips/DutyInformation4-Show.asp?duty=$internal_id&page=4");
 	my $content = $mech->res->content;
 	$d->{divisions} = \my @c;
-	while (  $content =~ /w\('(DivisionPop-up(Req)?\.asp\?division=(\w+).*?)'.*?<b>(\w+)/g ) {
-	    my $division_code = $4;
-	    my $url = $1; 
-	    my $is_req_row = !!$2;
-	    my %i = $is_req_row ? () : (
-		division_id => $3,
-		division_code => $division_code,
-		);
-	    if ( $is_req_row ) {
-		$d->{required} = \%i;
-	    } else {
-		next if exclude_division $division_code;
-		push @c => \%i;
-	    }
-	    print " $division_code";
-	    $url =~ s/&amp;/&/g; # Wierd escaping in the javascript
-	    $mech->get($url);
+	#die $content;
+	while (  $content =~ / on[cC]lick="NW\('(\d+)','(\d+)',[^>]+ title="(.*?) - [^>]+><b>(.*?)<\/b>/g ) {
+	    my %i = (
+		division_name => $3,
+		division_id => $1,
+		division_code => $4,
+		record => $2, # The ID of this unit at this time on this duty (may be multiple)
+	    );
+  	    $units{$i{division_id}}{code} //= $i{division_code};
+	    next if exclude_division $i{division_code};
+	    push @c => \%i;
+	    print " $i{division_code}";
+	    $mech->get("$dips/DivisionPop-up.asp?division=$i{division_id}&duty=$i{record}");
 	    $i{$_->name // ''}=$_->value for $mech->current_form->inputs;
-	    delete $i{''};
-	    unless ( $is_req_row ) {
-		my $tree = HTML::TreeBuilder::XPath->
-		    new_from_content($mech->res->content);
-		($i{division_name})=
-		    $tree->findnodes_as_strings('/html/body/form/table/tr[2]/td[2]');
-	    }
+	    delete @i{'','tempEndTime','tempStartTime'};
+	    #die Dumper \%i;
 	}
+	$d->{required} = \my %i;
+	$mech->get("$dips/DivisionPop-upReq.asp?division=REQ&duty=$internal_id");
+	#die $mech->content;
+	$i{$_->name // ''}=$_->value for $mech->current_form->inputs;
+	delete @i{'','tempEndTime','tempStartTime'};
     }
-    {
-	$d->{members} = \my @members;
-	$mech->get("$dips/newsja/CountMeInService.asp?duty=$internal_id");
-	my $tree = HTML::TreeBuilder::XPath->new_from_content($mech->res->content);
-	my @rows = $tree->findnodes('/html/body/table/tr/td/center/table[2]/tr');
-	for my $row ( @rows ) {
-	    # We want the record ID of the members attendance at the 
-	    # duty to make the UID for the iCalendar entry in the
-	    # member's calendar as member could have more than on
-	    # shift on a duty
-	    
-	    next unless my ($url,$record) = ( $row->attr('onclick') // '')
-		=~ /'(.*type=editmember&record=(\d+).*?)'/ ;
-
-	    # The td node has the "logged by" in a separate child node.
-            # the one we want is the direct text() child.	    
-	    my @c = $row->findnodes_as_strings('td/text()[1]');
-	    my ( $division_code,$division_name) = $c[4] =~ /(\w+)\s+-\s+(.*)/;
-	    next if exclude_division $division_code;
-	    print ".";
-	    my $name=trim("@c[0,1]");
-	    # Let's assume there's noboby called "- Lead Name"
-	    my $lead = 0+ $name =~ s/\s+- Lead Name\s*$//i;
-	    my ($role) = $c[2] =~ /\((\w+)\)/;
-	    # Need to drill down to to get start and end as
-	    # we can't assume the date of the shift is the same
-	    # as the date of the duty
-	    $mech->get($url);
-	    my %i = ( 
-		record => $record,
-		name => $name, 
-		division_name => $division_name,
-		division_code => $division_code,
-		);
-	    push @members => \%i;
-	    $i{$_->name // ''}=$_->value for $mech->current_form->inputs;
-	    delete $i{''};
-	}
-	say '';
-    }
+    say '';
     last if $quick_test;
 }
 
-my $dat = { 
+for my $duty ( sort keys %duties ) {
+    my $d=$duties{$duty};
+    my $internal_id = $d->{internal_id};
+    print "Get members on $duty";
+    {
+	$d->{members} = \my @members;
+	$mech->get("$dips/CountMeInService.asp?show=all&duty=$internal_id");
+	my $content = $mech->res->content;
+	while ( $content =~ / onclick="SM\((\d+)\)" (?>.*?<td>){5}(.*?)</sg ) {
+	    my %i = ( 
+		record => $1,
+	        division_name => $2,
+            );
+	    # We can only infer the division code if we have seen it before
+	    if ( my $division_code = $units_by_name{$i{division_name}}->{code} ) {
+	       $i{division_code} = $division_code;
+    	       next if exclude_division $division_code;
+	    }
+  	    push @members => \%i;
+	    $mech->get("$dips/CountMeInService.asp?type=editmember&record=$i{record}");
+	    ($i{name}) = $mech->res->content =~ /Members Name:<\/b>(?>.*?<td .*?>)(?:&nbsp;)*([^<]*) - /s;
+	    $i{$_->name // ''}=$_->value for $mech->current_form->inputs;
+	    delete $i{''};
+	    # die Dumper \%i; 
+	}
+    }
+    say '';
+    last if $quick_test;
+}
+
+%dat = (
+    %dat, 
     duties=> [ values %duties ],
     my_division_id => $my_division_id,
-};
+);
 
-store $dat, $output_file;
+store \%dat, $output_file;
 
 if ( $output_file =~ s/\.dat$/.txt/ ) {
     open my $dump, '>', $output_file or dir $!;
-    say $dump Dumper $dat;
+    say $dump Dumper \%dat;
 }
 
 

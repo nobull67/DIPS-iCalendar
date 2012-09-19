@@ -2,10 +2,13 @@ use strict;
 use warnings;
 use Data::Dumper;
 use Storable;
-use 5.10.0;
+use v5.14;
 use Getopt::Long;
 use POSIX qw( strftime );
 use Time::Local;
+
+$Data::Dumper::Sortkeys = 1;
+$Data::Dumper::Indent = 1;
 
 sub qu {
     my $s = shift;
@@ -22,6 +25,7 @@ sub parse_date_to_noon {
 
 sub fixup_dates {
     my $d = shift;
+    # warn Dumper $d;
     s/^(\d\d):(\d\d)$/$1${2}00/ or die
 	for my($from,$until)=@$d{'StartTime','EndTime'};
 
@@ -38,7 +42,7 @@ sub begin_calendar {
     open $ics_file, '>', shift().'.ics' or die $!;
     select $ics_file;
     say "BEGIN:VCALENDAR";
-    say "PRODID:-//Brian.McCauley\@kings-norton.sja.org.uk//DIPS-iCalendar 0.01//EN";
+    say "PRODID:-//Brian.McCauley\@sja.org.uk//DIPS-iCalendar 0.02//EN";
     say "VERSION:2.0";
     say "METHOD:PUBLISH";
     say "BEGIN:VTIMEZONE";
@@ -97,7 +101,7 @@ sub duty {
 
     say "SUMMARY:",qu($summary);
 
-    say "UID:$id\@duties.org/DIPS-iCalendar";
+    say "UID:$id\@dips.sja.org.uk/DIPS-iCalendar";
     say "END:VEVENT";
 }
 
@@ -108,28 +112,35 @@ GetOptions( 'file=s' => \$input_file,
 
 my $duties = @{retrieve($input_file)}{'duties'};
 
+# die Dumper $duties;
+
 # Get lists of members and units (unfortunately don't have members IDs)
 
 my %units;
 for my $duty ( @$duties ) {
+    next unless $duty->{external_id};
     fixup_dates $duty;
     my $external_id = $duty->{external_id};
+    say "Processing duty $external_id";
     for my $d ( @{$duty->{divisions}} ) {
 	fixup_dates $d;
 	my $u = \%{$units{$d->{division_code}}};
 	$u->{name} = $d->{division_name};
 	$u->{duties}{$external_id} = $duty;
     }
+    # die Dumper $duty;
     for my $m ( @{$duty->{members}} ) {
 	# Handly back link in member
 	fixup_dates $m;
 	$m->{duty} = $duty;
-	my $u = \%{$units{$m->{division_code}}};
+	my $u = \%{$units{$m->{division_code} // '____'}};
 	$u->{name} ||= $m->{division_name};
 	#$u->{duties}{$external_id} = $duty;
 	push @{$u->{members}{$m->{name}}{duties}} => $m;
     }
 }
+
+
 
 for my $division_code ( sort keys %units ) {
     my $u = $units{$division_code};
