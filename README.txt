@@ -13,6 +13,7 @@ To use this program you first need to install the Perl programming language. If 
 Once you've installed Perl you'll need a couple of Perl modules. So long as you have a direct (not proxied) web connection you should be able to install these by typing "CPAN" then the module name at the command prompt.
 
 cpan WWW::Mechanize
+cpan WWW::Mechanize::GZip
 cpan HTML::TreeBuilder::XPath
 cpan Getopt::Long
 
