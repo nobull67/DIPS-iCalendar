@@ -244,6 +244,26 @@ for my $duty ( sort keys %duties ) {
     }
 
     {
+	$mech->get("$dips/DutyInformation8-Show.asp?duty=$internal_id&page=4&pagenumber=0");
+	$d->{assets} = \my @c;
+	my $content = $mech->res->content;
+	#die $content;
+	for ($content =~ / on[cC]lick="VS\('(.*?)<\/tr>/sg) {
+	   my @a = />([^<>]*)<\/td/g;
+	   #die Dumper \@a;
+	   for (@a) {
+	     s/&nbsp;/ /g;
+	     s/^\s+//;
+	     s/\s+$//;
+	   }
+	   # One day may want to add the rest
+	   push @c => \my %a;
+	   @a{ 'CallSign','Reg','Role'}=@a;
+	   $a{crew} = [ grep { $_ } @a[3..6] ];
+	}
+    }
+    
+    {
 	$mech->get("$dips/DutyInformation4-Show.asp?duty=$internal_id&page=4");
 	my $content = $mech->res->content;
 	$d->{divisions} = \my @c;

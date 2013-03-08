@@ -110,7 +110,8 @@ my $input_file = 'Scrape-DIPS.dat';
 GetOptions( 'file=s' => \$input_file,
     );
 
-my $duties = @{retrieve($input_file)}{'duties'};
+    
+my $duties = retrieve($input_file)->{'duties'};
 
 # die Dumper $duties;
 
@@ -140,8 +141,6 @@ for my $duty ( @$duties ) {
     }
 }
 
-
-
 for my $division_code ( sort keys %units ) {
     my $u = $units{$division_code};
     begin_calendar($division_code);
@@ -158,4 +157,55 @@ for my $division_code ( sort keys %units ) {
     }
 }
 
+my @duties_sorted = sort { $a->{start} cmp $b->{start} } @$duties;
 
+open my $vf, '>', 'vehicles.txt' or die $!;
+
+my %vehicles = (
+   FAU => "First Aid Post", # or is it "Treatment Unit"?
+   AU => "Ambulance", 
+   4x4 => "Off Road Vehicle (4x4)",
+   ORA => "Off Road Ambulance",
+   CRU=>"Cycle Response Unit",
+   MBUS => "Minibus",
+   CAR => "Response Car",
+   CU=> "Communication Unit",
+   SU => "Support Unit",
+   xxx => "Treatment Unit", # No requirement code?
+   yyy => "Other (not listed)",
+);
+
+# Cover status:
+#  1 => Still to be confirmed
+#  2 => Unit confirms level of cover as requested
+#  3 => Unit confirms event with changed level cover
+#  4 => Unit cannot cover event
+#  8 => Unit is no longer required
+
+for my $duty ( @duties_sorted ) {
+   # Consider only duties where vehicles required or assigned
+   next unless @{$duty->{assets}} || grep { $duty->{required}{$_} } keys %vehicles;
+   say $vf "$duty->{StartDate} $duty->{external_id} $duty->{Event}";
+   for my $type ( keys %vehicles ) {
+      my $description = $vehicles{$type};
+      my $required = $duty->{required}{$type};
+      my @assigned =  grep { $_->{Role} eq $description } @{$duty->{assets}};
+      my @confirmed = grep { $_->{CoverStatus} eq 2 || $_->{CoverStatus} eq 3 } @{$duty->{divisions}};
+      @confirmed = map { { Division => $_->{division_code}, Number => $_->{$type} } } @confirmed;
+      @confirmed = grep { $_->{Number} } @confirmed;      
+      next unless $required or @assigned or @confirmed;
+      print $vf "  $description";
+      print $vf " ($required)" if defined $required;
+      print $vf ":";
+      print $vf " ". join(', ' => map { "$_->{Division}($_->{Number})"} @confirmed) if @confirmed;
+      print $vf "\n";
+      for ( @assigned ) {
+         print $vf "   $_->{CallSign}";
+	 if ( @{$_->{Crew} || []} ) { 
+            print ": " . join(', ',@{$_->{Crew}})
+	 };
+	 print "\n";
+      }
+   }
+   say $vf "";
+}
