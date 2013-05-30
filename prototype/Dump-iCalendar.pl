@@ -36,7 +36,21 @@ sub fixup_dates {
     $d->{end} = strftime "%Y%m%dT$until", gmtime $noon;
 }    
 
+# Transform YYYYMMDDTHHMMSS to YYYY-MM-DD HH:MM
+sub df {
+    shift =~ /^(\d\d\d\d)(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)$/ or die;
+    "$1-$2-$3 $4:$5";
+}
+
 my $ics_file;
+
+open my $csv_file,'>','duties.csv' or die $!;
+
+sub csv {
+   #die Dumper \@_;
+   no warnings 'uninitialized';
+   say $csv_file join(',',map{"\"$_\""} @_);
+}
 
 sub begin_calendar {
     open $ics_file, '>', shift().'.ics' or die $!;
@@ -150,11 +164,13 @@ for my $division_code ( sort keys %units ) {
     end_calendar;
     for my $member_name ( sort keys %{$u->{members}} ) {
 	begin_calendar("$division_code $member_name");
-	for my $m ( @{$u->{members}{$member_name}{duties}} ) {
+	for my $m ( sort { $a->{start} cmp $b->{start} } @{$u->{members}{$member_name}{duties}} ) {
 	    duty @$m{'duty','start','end'}, "duty-member-shift-$m->{record}";
+		# die $division_code;
+		csv $division_code,$m->{name},$m->{Role},$m->{duty}{external_id},$m->{duty}{Event},df($m->{start}),df($m->{end});
 	}
 	end_calendar;
-    }
+   }
 }
 
 my @duties_sorted = sort { $a->{start} cmp $b->{start} } @$duties;

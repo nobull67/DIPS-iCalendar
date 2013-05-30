@@ -45,15 +45,21 @@ my $mech = WWW::Mechanize::GZip->new();
 
 $|=1; # So we can print dots
 
-print "Login as $user";
+print "Login as $user ";
 $mech->get( $dips );
+print '.';
 $mech->field('UserName',$user);
+print '.';
 $mech->field('Password',$pass);
-$mech->submit;
+print '.';
+$mech->submit;	
 say '';
+
+say $mech->uri;
 
 ($dips = $mech->uri) =~ s/\/index.*//;
 
+say "Root url $dips";
 
 # Avoid start of day redirect later
 $mech->get("$dips/DutySystem-List.asp?filter=$filter");
@@ -212,12 +218,16 @@ unless ( $no_commitment ) {
   }
 }
 
-say "Found duties = ",scalar(keys(%duties));
+my $duty_count = keys %duties;
+say "Found duties = $duty_count";
+
+my $duty_i;
 
 for my $duty ( sort keys %duties ) {
     my $d=$duties{$duty};
     my $internal_id = $d->{internal_id};
-    print "Get details of $duty";
+	++$duty_i;
+    print "$duty_i/$duty_count: $duty";
     unless ( $internal_id ) {
 	# If I only external ref then I need to get ref
 	# This is insane - we are told to strip the leading zero from the number
@@ -280,8 +290,11 @@ for my $duty ( sort keys %duties ) {
 	    push @c => \%i;
 	    print " $i{division_code}";
 	    $mech->get("$dips/DivisionPop-up.asp?division=$i{division_id}&duty=$i{record}");
-	    $i{$_->name // ''}=$_->value for $mech->current_form->inputs;
-	    delete @i{'','tempEndTime','tempStartTime'};
+        # This should not fail, but odly it does
+	    if (my $current_form = $mech->current_form) {
+		  $i{$_->name // ''}=$_->value for $current_form->inputs;
+		}
+	    delete @i{'','tempEndTime','tempStartTime','DutyLinkNumber'};
 	    #die Dumper \%i;
 	}
 	$d->{required} = \my %i;
