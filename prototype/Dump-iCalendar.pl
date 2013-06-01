@@ -140,8 +140,8 @@ for my $duty ( @$duties ) {
     for my $d ( @{$duty->{divisions}} ) {
 	fixup_dates $d;
 	my $u = \%{$units{$d->{division_code}}};
-	$u->{name} = $d->{division_name};
-	$u->{duties}{$external_id} = $duty;
+		$u->{name} = $d->{division_name};
+		$u->{duties}{$external_id} = $duty;
     }
     # die Dumper $duty;
     for my $m ( @{$duty->{members}} ) {
@@ -159,7 +159,7 @@ for my $division_code ( sort keys %units ) {
     my $u = $units{$division_code};
     begin_calendar($division_code);
     for my $external_id ( sort keys %{$u->{duties}} ) {
-	duty $u->{duties}{$external_id};
+		duty $u->{duties}{$external_id};
     }
     end_calendar;
     for my $member_name ( sort keys %{$u->{members}} ) {
@@ -167,7 +167,7 @@ for my $division_code ( sort keys %units ) {
 	for my $m ( sort { $a->{start} cmp $b->{start} } @{$u->{members}{$member_name}{duties}} ) {
 	    duty @$m{'duty','start','end'}, "duty-member-shift-$m->{record}";
 		# die $division_code;
-		csv $division_code,$m->{name},$m->{Role},$m->{duty}{external_id},$m->{duty}{Event},df($m->{start}),df($m->{end});
+		csv $m->{division_name},$m->{name},$m->{Role},$m->{duty}{external_id},$m->{duty}{Event},df($m->{start}),df($m->{end});
 	}
 	end_calendar;
    }
